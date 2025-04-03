@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>点云补全 API 客户端</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            background-color: #f8f8f8;
+            border: 1px solid #ddd;
+            border-bottom: none;
+            margin-right: 5px;
+            border-radius: 5px 5px 0 0;
+        }
+        .tab.active {
+            background-color: white;
+            border-bottom: 1px solid white;
+            margin-bottom: -1px;
+            font-weight: bold;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        #result, #statusArea {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #3498db;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .info-box {
+            background-color: #e7f5fe;
+            border: 1px solid #b8daff;
+            color: #004085;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+        }
+        table, th, td {
+            border: 1px solid #ddd;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>点云补全 API 客户端</h1>
+        
+        <div class="info-box">
+            <p>服务器地址: <span id="serverAddress">223.109.239.8:4011</span></p>
+            <div id="serverStatus">检查服务器状态中...</div>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" data-tab="file">单个文件处理</div>
+            <div class="tab" data-tab="folder">文件夹批处理</div>
+            <div class="tab" data-tab="status">服务器状态</div>
+        </div>
+        
+        <div class="tab-content active" data-tab="file">
+            <form id="fileForm">
+                <div class="form-group">
+                    <label for="inputFile">输入文件路径 (服务器上的绝对路径):</label>
+                    <input type="text" id="inputFile" placeholder="/path/to/input.ply" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="outputFile">输出文件路径 (服务器上的绝对路径):</label>
+                    <input type="text" id="outputFile" placeholder="/path/to/output.ply" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="targetPoints">目标点数量:</label>
+                    <input type="number" id="targetPoints" value="4096" min="1" max="20000">
+                </div>
+                
+                <div class="form-group">
+                    <label for="samplingMethod">采样方法:</label>
+                    <select id="samplingMethod">
+                        <option value="fps">最远点采样 (FPS)</option>
+                        <option value="random">随机采样</option>
+                        <option value="voxel">体素下采样</option>
+                    </select>
+                </div>
+                
+                <button type="submit" id="processFileBtn">处理文件</button>
+            </form>
+            
+            <div class="loading" id="fileLoading">
+                <div class="spinner"></div>
+                <span>处理中，请稍候...</span>
+            </div>
+            
+            <div id="fileResult"></div>
+        </div>
+        
+        <div class="tab-content" data-tab="folder">
+            <form id="folderForm">
+                <div class="form-group">
+                    <label for="inputFolder">输入文件夹路径 (服务器上的绝对路径):</label>
+                    <input type="text" id="inputFolder" placeholder="/path/to/input_folder" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="outputFolder">输出文件夹路径 (服务器上的绝对路径):</label>
+                    <input type="text" id="outputFolder" placeholder="/path/to/output_folder" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="folderTargetPoints">目标点数量:</label>
+                    <input type="number" id="folderTargetPoints" value="4096" min="1" max="20000">
+                </div>
+                
+                <div class="form-group">
+                    <label for="folderSamplingMethod">采样方法:</label>
+                    <select id="folderSamplingMethod">
+                        <option value="fps">最远点采样 (FPS)</option>
+                        <option value="random">随机采样</option>
+                        <option value="voxel">体素下采样</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="fileExtension">文件扩展名:</label>
+                    <input type="text" id="fileExtension" value=".ply">
+                </div>
+                
+                <button type="submit" id="processFolderBtn">处理文件夹</button>
+            </form>
+            
+            <div class="loading" id="folderLoading">
+                <div class="spinner"></div>
+                <span>处理中，请稍候...</span>
+            </div>
+            
+            <div id="folderResult"></div>
+        </div>
+        
+        <div class="tab-content" data-tab="status">
+            <button id="checkStatusBtn">刷新服务器状态</button>
+            <button id="checkGpuInfoBtn">查看GPU信息</button>
+            <button id="checkDevicesBtn">查看可用设备</button>
+            
+            <div id="statusArea">点击上方按钮查看服务器状态信息</div>
+        </div>
+    </div>
+    
+    <script>
+        // 基本配置
+        const API_BASE_URL = 'http://223.109.239.8:4011';
+        
+        // 页面加载完成后执行
+        document.addEventListener('DOMContentLoaded', function() {
+            // 初始检查服务器状态
+            checkServerHealth();
+            
+            // 设置标签页切换逻辑
+            setupTabs();
+            
+            // 设置表单提交事件
+            document.getElementById('fileForm').addEventListener('submit', handleFileFormSubmit);
+            document.getElementById('folderForm').addEventListener('submit', handleFolderFormSubmit);
+            
+            // 设置状态查询按钮
+            document.getElementById('checkStatusBtn').addEventListener('click', checkServerHealth);
+            document.getElementById('checkGpuInfoBtn').addEventListener('click', checkGpuInfo);
+            document.getElementById('checkDevicesBtn').addEventListener('click', checkDevices);
+        });
+        
+        // 设置标签页切换
+        function setupTabs() {
+            const tabs = document.querySelectorAll('.tab');
+            
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    // 移除所有活动标签
+                    tabs.forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(content => {
+                        content.classList.remove('active');
+                    });
+                    
+                    // 设置当前标签为活动
+                    tab.classList.add('active');
+                    const tabName = tab.getAttribute('data-tab');
+                    document.querySelector(`.tab-content[data-tab="${tabName}"]`).classList.add('active');
+                });
+            });
+        }
+        
+        // 处理单文件表单提交
+        async function handleFileFormSubmit(event) {
+            event.preventDefault();
+            
+            const inputFile = document.getElementById('inputFile').value;
+            const outputFile = document.getElementById('outputFile').value;
+            const targetPoints = document.getElementById('targetPoints').value;
+            const samplingMethod = document.getElementById('samplingMethod').value;
+            
+            if (!inputFile || !outputFile) {
+                showResult('fileResult', '请填写输入和输出文件路径', 'error');
+                return;
+            }
+            
+            // 显示加载动画
+            document.getElementById('fileLoading').style.display = 'block';
+            
+            // 准备请求数据
+            const requestData = {
+                input_file: inputFile,
+                output_file: outputFile,
+                target_points: parseInt(targetPoints),
+                sampling_method: samplingMethod
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/complete_file`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('fileResult', `
+                        <div class="status success">处理成功!</div>
+                        <p><strong>输入文件:</strong> ${data.input_file}</p>
+                        <p><strong>输出文件:</strong> ${data.output_file}</p>
+                    `, 'success');
+                } else {
+                    showResult('fileResult', `
+                        <div class="status error">处理失败</div>
+                        <p><strong>错误:</strong> ${data.detail || '未知错误'}</p>
+                    `, 'error');
+                }
+            } catch (error) {
+                showResult('fileResult', `
+                    <div class="status error">请求错误</div>
+                    <p><strong>错误:</strong> ${error.message}</p>
+                `, 'error');
+            } finally {
+                // 隐藏加载动画
+                document.getElementById('fileLoading').style.display = 'none';
+            }
+        }
+        
+        // 处理文件夹表单提交
+        async function handleFolderFormSubmit(event) {
+            event.preventDefault();
+            
+            const inputFolder = document.getElementById('inputFolder').value;
+            const outputFolder = document.getElementById('outputFolder').value;
+            const targetPoints = document.getElementById('folderTargetPoints').value;
+            const samplingMethod = document.getElementById('folderSamplingMethod').value;
+            const fileExtension = document.getElementById('fileExtension').value;
+            
+            if (!inputFolder || !outputFolder) {
+                showResult('folderResult', '请填写输入和输出文件夹路径', 'error');
+                return;
+            }
+            
+            // 显示加载动画
+            document.getElementById('folderLoading').style.display = 'block';
+            
+            // 准备请求数据
+            const requestData = {
+                input_folder: inputFolder,
+                output_folder: outputFolder,
+                target_points: parseInt(targetPoints),
+                sampling_method: samplingMethod,
+                file_extension: fileExtension
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/complete_folder`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // 构建结果表格
+                    let tableHtml = `
+                        <div class="status success">
+                            处理完成! 成功: ${data.successful}/${data.total_files} 个文件
+                        </div>
+                        <table>
+                            <tr>
+                                <th>文件名</th>
+                                <th>状态</th>
+                                <th>详情</th>
+                            </tr>
+                    `;
+                    
+                    data.results.forEach(result => {
+                        tableHtml += `
+                            <tr>
+                                <td>${result.file}</td>
+                                <td>${result.status === 'success' ? '成功' : '失败'}</td>
+                                <td>${result.status === 'success' ? result.output_path : result.error}</td>
+                            </tr>
+                        `;
+                    });
+                    
+                    tableHtml += `</table>`;
+                    
+                    showResult('folderResult', tableHtml, 'success');
+                } else {
+                    showResult('folderResult', `
+                        <div class="status error">处理失败</div>
+                        <p><strong>错误:</strong> ${data.detail || '未知错误'}</p>
+                    `, 'error');
+                }
+            } catch (error) {
+                showResult('folderResult', `
+                    <div class="status error">请求错误</div>
+                    <p><strong>错误:</strong> ${error.message}</p>
+                `, 'error');
+            } finally {
+                // 隐藏加载动画
+                document.getElementById('folderLoading').style.display = 'none';
+            }
+        }
+        
+        // 检查服务器健康状态
+        async function checkServerHealth() {
+            const statusElement = document.getElementById('serverStatus');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/health`);
+                const data = await response.json();
+                
+                if (response.ok && data.status === 'healthy') {
+                    statusElement.innerHTML = '<span style="color: green;">✔ 服务器运行正常</span>';
+                    document.getElementById('statusArea').innerHTML = '<div class="status success">服务器状态: 运行正常</div>';
+                } else {
+                    statusElement.innerHTML = '<span style="color: red;">✘ 服务器状态异常</span>';
+                    document.getElementById('statusArea').innerHTML = '<div class="status error">服务器状态异常</div>';
+                }
+            } catch (error) {
+                statusElement.innerHTML = '<span style="color: red;">✘ 无法连接到服务器</span>';
+                document.getElementById('statusArea').innerHTML = `<div class="status error">无法连接到服务器: ${error.message}</div>`;
+            }
+        }
+        
+        // 检查GPU信息
+        async function checkGpuInfo() {
+            const statusArea = document.getElementById('statusArea');
+            statusArea.innerHTML = '获取GPU信息中...';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/gpu_info`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.error) {
+                        statusArea.innerHTML = `<div class="status error">${data.error}</div>`;
+                        return;
+                    }
+                    
+                    let html = '<h3>GPU信息</h3><table><tr><th>设备</th><th>总内存(GB)</th><th>已分配(GB)</th><th>已缓存(GB)</th><th>可用(GB)</th></tr>';
+                    
+                    for (const [device, info] of Object.entries(data)) {
+                        html += `
+                            <tr>
+                                <td>${device}</td>
+                                <td>${info.total.toFixed(2)}</td>
+                                <td>${info.allocated.toFixed(2)}</td>
+                                <td>${info.reserved.toFixed(2)}</td>
+                                <td>${info.free.toFixed(2)}</td>
+                            </tr>
+                        `;
+                    }
+                    
+                    html += '</table>';
+                    statusArea.innerHTML = html;
+                } else {
+                    statusArea.innerHTML = `<div class="status error">获取GPU信息失败: ${data.detail || '未知错误'}</div>`;
+                }
+            } catch (error) {
+                statusArea.innerHTML = `<div class="status error">请求错误: ${error.message}</div>`;
+            }
+        }
+        
+        // 检查可用设备
+        async function checkDevices() {
+            const statusArea = document.getElementById('statusArea');
+            statusArea.innerHTML = '获取设备信息中...';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/devices`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    let html = `
+                        <h3>可用设备</h3>
+                        <p><strong>当前使用设备:</strong> ${data.current}</p>
+                        <p><strong>推荐设备:</strong> ${data.recommended}</p>
+                        <p><strong>所有可用设备:</strong></p>
+                        <ul>
+                    `;
+                    
+                    data.devices.forEach(device => {
+                        html += `<li>${device}</li>`;
+                    });
+                    
+                    html += '</ul>';
+                    statusArea.innerHTML = html;
+                } else {
+                    statusArea.innerHTML = `<div class="status error">获取设备信息失败: ${data.detail || '未知错误'}</div>`;
+                }
+            } catch (error) {
+                statusArea.innerHTML = `<div class="status error">请求错误: ${error.message}</div>`;
+            }
+        }
+        
+        // 显示结果
+        function showResult(elementId, message, type) {
+            const resultElement = document.getElementById(elementId);
+            resultElement.innerHTML = message;
+            resultElement.className = type === 'error' ? 'status error' : 'status success';
+        }
+    </script>
+</body>
+</html> 

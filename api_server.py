@@ -1,5 +1,6 @@
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import os
 import numpy as np
 import open3d as o3d
@@ -16,6 +17,15 @@ from pipeline import Process_point_cloud, Inference, Restore_point_cloud
 from io import BytesIO
 
 app = FastAPI()
+
+# 添加CORS中间件，允许跨域请求
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 允许所有来源
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许所有方法
+    allow_headers=["*"],  # 允许所有头
+)
 
 # Global variable to store normalization parameters
 normal_record_map = {}
