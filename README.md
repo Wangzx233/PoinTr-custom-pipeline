@@ -226,3 +226,99 @@ If you find our work useful in your research, please consider citing:
   year={2021}
 }
 ```
+
+# 点云补全 API 服务器
+
+这是一个用于点云补全的API服务器，基于现有的点云补全代码构建。该API允许通过HTTP请求实现点云的上传、处理和补全。
+
+## 安装
+
+1. 安装所需依赖:
+```bash
+pip install -r api_requirements.txt
+```
+
+## 运行服务器
+
+使用以下命令启动API服务器:
+
+```bash
+python api_server.py --model_config <your_model_config_path> --model_checkpoint <your_model_checkpoint_path> --device cuda:0 --port 5000
+```
+
+参数说明:
+- `--model_config`: 模型配置YAML文件路径（必需）
+- `--model_checkpoint`: 预训练权重文件路径（必需）
+- `--device`: 用于推理的设备 (默认: 'cuda:0')
+- `--port`: API服务器端口 (默认: 5000)
+
+## API 端点
+
+### 健康检查
+
+```
+GET /health
+```
+
+返回服务器状态，用于确认服务器是否正常运行。
+
+### 点云补全
+
+```
+POST /complete
+```
+
+#### 请求参数:
+
+- `file`: 点云文件 (.ply 格式)
+- `target_points` (可选): 采样后的点数 (默认: 8192)
+- `sampling_method` (可选): 采样方法, 可选 'fps', 'random', 或 'voxel' (默认: 'fps')
+- `response_format` (可选): 响应格式, 可选 'file' 或 'base64' (默认: 'file')
+
+#### 响应:
+
+如果 `response_format` 为 'file':
+- 直接返回补全后的点云文件 (.ply 格式)
+
+如果 `response_format` 为 'base64':
+- 返回JSON格式:
+  ```json
+  {
+    "completion_successful": true,
+    "point_cloud_base64": "<base64_encoded_point_cloud>"
+  }
+  ```
+
+#### 错误响应:
+
+```json
+{
+  "error": "错误描述"
+}
+```
+
+## 使用示例客户端
+
+提供了一个简单的客户端脚本 `api_client.py`，可用于测试API:
+
+```bash
+python api_client.py --server_url http://localhost:5000 --point_cloud_file your_pointcloud.ply --output_file result.ply
+```
+
+参数说明:
+- `--server_url`: API服务器URL (必需)
+- `--point_cloud_file`: 点云文件路径 (必需)
+- `--target_points`: 采样点数 (默认: 8192)
+- `--sampling_method`: 采样方法 ['fps', 'random', 'voxel'] (默认: 'fps')
+- `--output_file`: 输出文件路径 (可选)
+- `--format`: 响应格式 ['file', 'base64'] (默认: 'file')
+
+## 部署到服务器
+
+对于生产环境，建议使用gunicorn进行部署:
+
+```bash
+gunicorn -b 0.0.0.0:5000 -w 1 'api_server:app' --preload
+```
+
+注意: 由于点云处理可能对资源要求较高，建议调整worker数量，以确保系统稳定运行。

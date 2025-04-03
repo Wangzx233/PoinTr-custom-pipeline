@@ -1,0 +1,16 @@
+flask==2.0.1
+numpy
+open3d
+scikit-learn
+tqdm
+pyyaml
+easydict
+h5py
+matplotlib
+opencv-python
+scipy
+tensorboardX
+timm==0.4.5
+transforms3d
+einops
+gunicorn==20.1.0 
