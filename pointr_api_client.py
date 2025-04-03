@@ -277,13 +277,14 @@ if __name__ == "__main__":
     #
     # 文件夹示例
     folder_result = complete_point_cloud_folder(
-        input_folder="/path/to/input_folder",
-        output_folder="/path/to/output_folder",
-        target_points=4096,
+        input_folder="/home/wangxin/api/PoinTr-custom-pipeline/rotated_2",
+        output_folder="/home/wangxin/api/PoinTr-custom-pipeline/rotated_2_output",
+        target_points=8192,
         sampling_method="fps",
         file_extension=".ply"
     )
 
+    print("输出文件夹：",folder_result["output_folder"])
     if folder_result["status"] == "success":
         print(f"文件夹处理成功，共 {folder_result['successful']}/{folder_result['total_files']} 个文件")
     else:
