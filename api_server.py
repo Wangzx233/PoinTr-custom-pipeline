@@ -11,6 +11,7 @@ import base64
 import uvicorn
 import torch
 import gc
+import shutil
 from typing import Optional, List
 from pydantic import BaseModel
 from pipeline import Process_point_cloud, Inference, Restore_point_cloud
@@ -68,6 +69,7 @@ class FolderProcessRequest(BaseModel):
     target_points: int = 4096  # 降低默认点数
     sampling_method: str = 'fps'
     file_extension: str = '.ply'
+    skip_files: List[str] = []  # 新增参数：不需要补全直接复制的文件名列表（不含扩展名）
 
 class FileProcessRequest(BaseModel):
     input_file: str
@@ -190,8 +192,44 @@ async def complete_folder(request: FolderProcessRequest):
     results = []
     success_count = 0
     
+    # 处理无需补全、直接复制的文件
+    skip_files = request.skip_files or []
+    copied_files = 0
+    
+    for filename_no_ext in skip_files:
+        filename = f"{filename_no_ext}{request.file_extension}"
+        input_path = os.path.join(request.input_folder, filename)
+        output_path = os.path.join(request.output_folder, filename)
+        
+        if os.path.exists(input_path):
+            try:
+                # 直接复制文件
+                shutil.copy2(input_path, output_path)
+                results.append({
+                    "file": filename,
+                    "status": "copied",
+                    "output_path": output_path
+                })
+                success_count += 1
+                copied_files += 1
+            except Exception as e:
+                results.append({
+                    "file": filename,
+                    "status": "failed",
+                    "error": f"复制失败: {str(e)}"
+                })
+        else:
+            results.append({
+                "file": filename,
+                "status": "failed",
+                "error": f"文件不存在: {input_path}"
+            })
+    
+    # 过滤出需要进行补全处理的文件
+    files_to_process = [f for f in files if os.path.splitext(f)[0] not in skip_files]
+    
     # Process each file
-    for filename in files:
+    for filename in files_to_process:
         input_path = os.path.join(request.input_folder, filename)
         output_filename = os.path.splitext(filename)[0] + '.ply'
         output_path = os.path.join(request.output_folder, output_filename)
@@ -251,6 +289,8 @@ async def complete_folder(request: FolderProcessRequest):
     return {
         "total_files": len(files),
         "successful": success_count,
+        "copied_files": copied_files,
+        "completed_files": success_count - copied_files,
         "results": results
     }
 

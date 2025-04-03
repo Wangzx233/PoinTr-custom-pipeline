@@ -1,7 +1,7 @@
 import requests
 import os
 import time
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 
 def complete_point_cloud(
     input_path: str,
@@ -137,7 +137,8 @@ def complete_point_cloud_folder(
     sampling_method: str = "fps",
     file_extension: str = ".ply",
     timeout: int = 600,
-    verbose: bool = True
+    verbose: bool = True,
+    skip_files: List[str] = None
 ) -> Dict[str, Any]:
     """调用点云补全API服务处理整个文件夹的点云文件
     
@@ -150,6 +151,7 @@ def complete_point_cloud_folder(
         file_extension (str): 处理的文件扩展名，默认 ".ply"
         timeout (int): 请求超时时间（秒），默认 600
         verbose (bool): 是否显示详细信息，默认 True
+        skip_files (List[str], optional): 需要跳过补全直接复制的文件名列表（不含扩展名）
         
     Returns:
         Dict[str, Any]: 包含处理结果的字典，至少包含 'status', 'total_files', 'successful' 和 'results' 字段
@@ -168,13 +170,17 @@ def complete_point_cloud_folder(
     if sampling_method not in ["fps", "random", "voxel"]:
         raise ValueError(f"不支持的采样方法: {sampling_method}，可选 'fps', 'random', 'voxel'")
     
+    # 确保skip_files是一个列表
+    skip_files = skip_files or []
+    
     # 准备请求数据
     request_data = {
         "input_folder": input_folder,
         "output_folder": output_folder,
         "target_points": target_points,
         "sampling_method": sampling_method,
-        "file_extension": file_extension
+        "file_extension": file_extension,
+        "skip_files": skip_files
     }
     
     # 检查服务器健康状态
@@ -197,6 +203,8 @@ def complete_point_cloud_folder(
     if verbose:
         print(f"发送文件夹处理请求: {input_folder} → {output_folder}")
         print(f"参数: 点数={target_points}, 采样方法={sampling_method}, 文件扩展名={file_extension}")
+        if skip_files:
+            print(f"跳过补全的文件: {len(skip_files)} 个")
     
     start_time = time.time()
     
@@ -215,6 +223,8 @@ def complete_point_cloud_folder(
             if verbose:
                 print(f"处理成功! 用时: {elapsed_time:.2f}秒")
                 print(f"总文件数: {result['total_files']}, 成功处理: {result['successful']}")
+                if 'copied_files' in result:
+                    print(f"直接复制: {result['copied_files']}个, 点云补全: {result['completed_files']}个")
             
             return {
                 "status": "success",
@@ -222,6 +232,8 @@ def complete_point_cloud_folder(
                 "output_folder": output_folder,
                 "total_files": result["total_files"],
                 "successful": result["successful"],
+                "copied_files": result.get("copied_files", 0),
+                "completed_files": result.get("completed_files", result["successful"]),
                 "results": result["results"],
                 "elapsed_time": elapsed_time
             }
@@ -274,18 +286,30 @@ if __name__ == "__main__":
     #     print(f"点云补全成功，输出文件: {result['output_file']}")
     # else:
     #     print(f"点云补全失败: {result['error']}")
-    #
-    # 文件夹示例
+    
+    # 文件夹示例 - 带跳过列表
+    skip_file_list = ["file1", "file2"]  # 这些文件将被直接复制而不进行补全处理
+    
     folder_result = complete_point_cloud_folder(
         input_folder="/home/wangxin/api/PoinTr-custom-pipeline/rotated_2",
         output_folder="/home/wangxin/api/PoinTr-custom-pipeline/rotated_2_output",
         target_points=8192,
         sampling_method="fps",
-        file_extension=".ply"
+        file_extension=".ply",
+        skip_files=skip_file_list
     )
 
-    print("输出文件夹：",folder_result["output_folder"])
+    print("输出文件夹：", folder_result["output_folder"])
     if folder_result["status"] == "success":
         print(f"文件夹处理成功，共 {folder_result['successful']}/{folder_result['total_files']} 个文件")
+        
+        # 分别统计复制和补全的文件数
+        copied_count = len([r for r in folder_result["results"] if r["status"] == "copied"])
+        completed_count = len([r for r in folder_result["results"] if r["status"] == "success"])
+        failed_count = len([r for r in folder_result["results"] if r["status"] not in ["copied", "success"]])
+        
+        print(f"- 直接复制: {copied_count} 个文件")
+        print(f"- 点云补全: {completed_count} 个文件")
+        print(f"- 处理失败: {failed_count} 个文件")
     else:
         print(f"文件夹处理失败: {folder_result['error']}") 
