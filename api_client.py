@@ -112,5 +112,6 @@ def process_file(args):
             except:
                 print(f"Server response: {e.response.text}")
 
+
 if __name__ == "__main__":
     main() 
