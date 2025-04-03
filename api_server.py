@@ -1,4 +1,5 @@
-from flask import Flask, request, jsonify, send_file
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse, JSONResponse
 import os
 import numpy as np
 import open3d as o3d
@@ -6,10 +7,13 @@ import tempfile
 import argparse
 import uuid
 import base64
+import uvicorn
+from typing import Optional
+from pydantic import BaseModel
 from pipeline import Process_point_cloud, Inference, Restore_point_cloud
 from io import BytesIO
 
-app = Flask(__name__)
+app = FastAPI()
 
 # Global variable to store normalization parameters
 normal_record_map = {}
@@ -32,56 +36,139 @@ def get_args():
     parser.add_argument(
         '--port',
         type=int,
-        default=5000,
+        default=4011,
         help='Port to run the API server on')
     args = parser.parse_args()
     return args
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({"status": "healthy"}), 200
+class FolderProcessRequest(BaseModel):
+    input_folder: str
+    output_folder: str
+    target_points: int = 8192
+    sampling_method: str = 'fps'
+    file_extension: str = '.ply'
 
-@app.route('/complete', methods=['POST'])
-def complete_point_cloud():
-    # Check if file is in the request
-    if 'file' not in request.files:
-        return jsonify({"error": "No file provided"}), 400
+class FileProcessRequest(BaseModel):
+    input_file: str
+    output_file: str
+    target_points: int = 8192
+    sampling_method: str = 'fps'
+
+@app.get('/health')
+def health_check():
+    return {"status": "healthy"}
+
+@app.post('/complete_folder')
+async def complete_folder(request: FolderProcessRequest):
+    """
+    Process all point cloud files in a folder and save results to output folder
+    """
+    # Validate input folder
+    if not os.path.exists(request.input_folder):
+        raise HTTPException(status_code=400, detail=f"Input folder '{request.input_folder}' does not exist")
     
-    file = request.files['file']
+    # Create output folder if it doesn't exist
+    os.makedirs(request.output_folder, exist_ok=True)
     
-    # Check if filename is empty
-    if file.filename == '':
-        return jsonify({"error": "No file selected"}), 400
+    # Get all files with the specified extension
+    files = [f for f in os.listdir(request.input_folder) if f.lower().endswith(request.file_extension)]
     
-    # Get parameters from request
-    target_points = int(request.form.get('target_points', 8192))
-    sampling_method = request.form.get('sampling_method', 'fps')
+    if not files:
+        raise HTTPException(status_code=400, detail=f"No {request.file_extension} files found in the input folder")
     
-    # Save the uploaded file to a temporary location
-    temp_dir = tempfile.mkdtemp()
-    input_path = os.path.join(temp_dir, file.filename)
-    file.save(input_path)
+    results = []
+    success_count = 0
     
-    # Generate a unique output filename
-    output_filename = f"{uuid.uuid4()}.ply"
-    output_path = os.path.join(temp_dir, output_filename)
+    # Process each file
+    for filename in files:
+        input_path = os.path.join(request.input_folder, filename)
+        output_filename = os.path.splitext(filename)[0] + '.ply'
+        output_path = os.path.join(request.output_folder, output_filename)
+        
+        try:
+            # Process the point cloud
+            success, center, scale_factor, pcd_filtered = Process_point_cloud(
+                input_path, 
+                request.target_points, 
+                request.sampling_method
+            )
+            
+            if not success:
+                results.append({
+                    "file": filename,
+                    "status": "failed",
+                    "error": "Failed to process point cloud"
+                })
+                continue
+            
+            # Store normalization parameters
+            normal_record_map[output_filename] = (center, scale_factor)
+            
+            # Run inference
+            pcd_out = Inference(pcd_filtered, app.state.args)
+            
+            # Restore the point cloud
+            current_center, current_scale_factor = normal_record_map[output_filename]
+            restored_pcd = Restore_point_cloud(pcd_out, current_center, current_scale_factor)
+            
+            # Remove statistical outliers
+            cl, ind = restored_pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2)
+            result_pcd = restored_pcd.select_by_index(ind)
+            
+            # Save the result
+            o3d.io.write_point_cloud(output_path, result_pcd)
+            
+            success_count += 1
+            results.append({
+                "file": filename,
+                "status": "success",
+                "output_path": output_path
+            })
+            
+        except Exception as e:
+            results.append({
+                "file": filename,
+                "status": "failed",
+                "error": str(e)
+            })
+    
+    return {
+        "total_files": len(files),
+        "successful": success_count,
+        "results": results
+    }
+
+@app.post('/complete_file')
+async def complete_file(request: FileProcessRequest):
+    """
+    Process a single point cloud file and save the result to the specified output path
+    """
+    # Validate input file
+    if not os.path.exists(request.input_file):
+        raise HTTPException(status_code=400, detail=f"Input file '{request.input_file}' does not exist")
+    
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(request.output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     
     try:
         # Process the point cloud
         success, center, scale_factor, pcd_filtered = Process_point_cloud(
-            input_path, 
-            target_points, 
-            sampling_method
+            request.input_file, 
+            request.target_points, 
+            request.sampling_method
         )
         
         if not success:
-            return jsonify({"error": "Failed to process point cloud"}), 500
+            raise HTTPException(status_code=500, detail="Failed to process point cloud")
         
         # Store normalization parameters
+        output_filename = os.path.basename(request.output_file)
         normal_record_map[output_filename] = (center, scale_factor)
         
         # Run inference
-        pcd_out = Inference(pcd_filtered, app.config['args'])
+        pcd_out = Inference(pcd_filtered, app.state.args)
         
         # Restore the point cloud
         current_center, current_scale_factor = normal_record_map[output_filename]
@@ -92,40 +179,18 @@ def complete_point_cloud():
         result_pcd = restored_pcd.select_by_index(ind)
         
         # Save the result
-        o3d.io.write_point_cloud(output_path, result_pcd)
+        o3d.io.write_point_cloud(request.output_file, result_pcd)
         
-        # Return options
-        response_format = request.form.get('response_format', 'file')
+        return {
+            "status": "success",
+            "input_file": request.input_file,
+            "output_file": request.output_file
+        }
         
-        if response_format == 'file':
-            # Return the file
-            return send_file(output_path, 
-                            as_attachment=True,
-                            download_name=output_filename)
-        elif response_format == 'base64':
-            # Convert to base64
-            with open(output_path, 'rb') as f:
-                encoded = base64.b64encode(f.read()).decode('utf-8')
-            return jsonify({
-                "completion_successful": True,
-                "point_cloud_base64": encoded
-            })
-        else:
-            return jsonify({"error": "Invalid response_format"}), 400
-            
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-    finally:
-        # Clean up temporary files
-        try:
-            os.remove(input_path)
-            if os.path.exists(output_path):
-                os.remove(output_path)
-            os.rmdir(temp_dir)
-        except:
-            pass
+        raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
+def start():
     args = get_args()
     
     # Validate required arguments
@@ -137,12 +202,15 @@ if __name__ == "__main__":
         print(f"Error: Model checkpoint file {args.model_checkpoint} not found")
         exit(1)
     
-    # Store args in app config
-    app.config['args'] = args
+    # Store args in app state
+    app.state.args = args
     
     print(f"Starting API server on port {args.port}...")
     print(f"Model config: {args.model_config}")
     print(f"Model checkpoint: {args.model_checkpoint}")
     print(f"Device: {args.device}")
     
-    app.run(host='0.0.0.0', port=args.port, debug=False) 
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
+
+if __name__ == "__main__":
+    start() 

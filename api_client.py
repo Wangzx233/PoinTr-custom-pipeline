@@ -1,23 +1,31 @@
 import requests
 import argparse
 import os
-import base64
+import json
 
 def main():
     parser = argparse.ArgumentParser(description='Point Cloud Completion API Client')
-    parser.add_argument('--server_url', type=str, required=True, help='API server URL (e.g., http://localhost:5000)')
-    parser.add_argument('--point_cloud_file', type=str, required=True, help='Path to point cloud file (.ply)')
-    parser.add_argument('--target_points', type=int, default=8192, help='Target number of points for sampling')
-    parser.add_argument('--sampling_method', choices=['fps', 'random', 'voxel'], default='fps', help='Sampling method')
-    parser.add_argument('--output_file', type=str, help='Output file path for completed point cloud')
-    parser.add_argument('--format', choices=['file', 'base64'], default='file', help='Response format')
+    parser.add_argument('--server_url', type=str, required=True, help='API server URL (e.g., http://localhost:4011)')
+    
+    # Add subparsers for different command types
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+    
+    # Folder processing command
+    folder_parser = subparsers.add_parser('folder', help='Process all files in a folder')
+    folder_parser.add_argument('--input_folder', type=str, required=True, help='Path to input folder containing point cloud files')
+    folder_parser.add_argument('--output_folder', type=str, required=True, help='Path to output folder for completed point clouds')
+    folder_parser.add_argument('--target_points', type=int, default=8192, help='Target number of points for sampling')
+    folder_parser.add_argument('--sampling_method', choices=['fps', 'random', 'voxel'], default='fps', help='Sampling method')
+    folder_parser.add_argument('--file_extension', type=str, default='.ply', help='File extension to process')
+    
+    # Single file processing command
+    file_parser = subparsers.add_parser('file', help='Process a single file')
+    file_parser.add_argument('--input_file', type=str, required=True, help='Path to input point cloud file')
+    file_parser.add_argument('--output_file', type=str, required=True, help='Path to output completed point cloud file')
+    file_parser.add_argument('--target_points', type=int, default=8192, help='Target number of points for sampling')
+    file_parser.add_argument('--sampling_method', choices=['fps', 'random', 'voxel'], default='fps', help='Sampling method')
     
     args = parser.parse_args()
-    
-    # Validate inputs
-    if not os.path.exists(args.point_cloud_file):
-        print(f"Error: Point cloud file {args.point_cloud_file} not found")
-        return
     
     # Check server health
     try:
@@ -29,56 +37,80 @@ def main():
         print(f"Server health check failed: {str(e)}")
         return
     
-    # Prepare the API request
-    url = f"{args.server_url}/complete"
+    if args.command == 'folder':
+        process_folder(args)
+    elif args.command == 'file':
+        process_file(args)
+    else:
+        parser.print_help()
+
+def process_folder(args):
+    url = f"{args.server_url}/complete_folder"
     
-    # Prepare form data and files
+    # Prepare request data
     data = {
-        'target_points': str(args.target_points),
-        'sampling_method': args.sampling_method,
-        'response_format': args.format
+        "input_folder": args.input_folder,
+        "output_folder": args.output_folder,
+        "target_points": args.target_points,
+        "sampling_method": args.sampling_method,
+        "file_extension": args.file_extension
     }
     
-    files = {
-        'file': (os.path.basename(args.point_cloud_file), open(args.point_cloud_file, 'rb'))
-    }
-    
-    print(f"Sending point cloud to server for completion...")
+    print(f"Processing all {args.file_extension} files in '{args.input_folder}'...")
     
     try:
-        response = requests.post(url, data=data, files=files)
+        # Send POST request with JSON data
+        response = requests.post(url, json=data)
         response.raise_for_status()  # Raise exception for HTTP errors
         
-        if args.format == 'file':
-            # If output file wasn't specified, use input filename with _completed suffix
-            if not args.output_file:
-                base_name = os.path.splitext(args.point_cloud_file)[0]
-                args.output_file = f"{base_name}_completed.ply"
-                
-            # Save the received file
-            with open(args.output_file, 'wb') as f:
-                f.write(response.content)
-            print(f"Completed point cloud saved to {args.output_file}")
-            
-        elif args.format == 'base64':
-            # Process base64 response
-            json_response = response.json()
-            if json_response.get('completion_successful'):
-                # If output file is specified, save the base64 content
-                if args.output_file:
-                    with open(args.output_file, 'wb') as f:
-                        decoded = base64.b64decode(json_response['point_cloud_base64'])
-                        f.write(decoded)
-                    print(f"Completed point cloud saved to {args.output_file}")
-                else:
-                    print("Received base64 encoded point cloud")
-            else:
-                print("Error in completion process")
-                
+        result = response.json()
+        print(f"Processing complete! Successful: {result['successful']}/{result['total_files']}")
+        
+        # Print detailed results if there were failures
+        if result['successful'] < result['total_files']:
+            print("\nFailed files:")
+            for file_result in result['results']:
+                if file_result['status'] == 'failed':
+                    print(f"  - {file_result['file']}: {file_result.get('error', 'Unknown error')}")
+                    
     except Exception as e:
         print(f"Error: {str(e)}")
         if hasattr(e, 'response') and hasattr(e.response, 'text'):
-            print(f"Server response: {e.response.text}")
+            try:
+                error_details = json.loads(e.response.text)
+                print(f"Server error: {error_details.get('detail', e.response.text)}")
+            except:
+                print(f"Server response: {e.response.text}")
+
+def process_file(args):
+    url = f"{args.server_url}/complete_file"
+    
+    # Prepare request data
+    data = {
+        "input_file": args.input_file,
+        "output_file": args.output_file,
+        "target_points": args.target_points,
+        "sampling_method": args.sampling_method
+    }
+    
+    print(f"Processing file '{args.input_file}'...")
+    
+    try:
+        # Send POST request with JSON data
+        response = requests.post(url, json=data)
+        response.raise_for_status()  # Raise exception for HTTP errors
+        
+        result = response.json()
+        print(f"Processing complete! Output saved to: {result['output_file']}")
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        if hasattr(e, 'response') and hasattr(e.response, 'text'):
+            try:
+                error_details = json.loads(e.response.text)
+                print(f"Server error: {error_details.get('detail', e.response.text)}")
+            except:
+                print(f"Server response: {e.response.text}")
 
 if __name__ == "__main__":
     main() 
